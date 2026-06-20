@@ -2,871 +2,954 @@
 <html lang="vi">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Poker Live Coach</title>
-  
-  <!-- Thư viện React & ReactDOM -->
-  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
-  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-  
-  <!-- Thư viện Babel để chạy JSX trực tiếp trên trình duyệt -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.3/babel.min.js"></script>
-
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#09090b">
+  <title>Poker GTO Coach</title>
+  <link rel="manifest" href="data:application/manifest+json,{&quot;name&quot;:&quot;Poker GTO&quot;,&quot;short_name&quot;:&quot;Poker GTO&quot;,&quot;start_url&quot;:&quot;.&quot;,&quot;display&quot;:&quot;standalone&quot;,&quot;background_color&quot;:&quot;%2309090b&quot;,&quot;theme_color&quot;:&quot;%2309090b&quot;,&quot;icons&quot;:[{&quot;src&quot;:&quot;data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 64 64%27%3E%3Crect width=%2764%27 height=%2764%27 rx=%2712%27 fill=%27%23059669%27/%3E%3Ctext x=%2732%27 y=%2742%27 text-anchor=%27middle%27 font-size=%2728%27 fill=%27white%27 font-family=%27sans-serif%27 font-weight=%27bold%27%3EPK%3C/text%3E%3C/svg%3E&quot;,&quot;sizes&quot;:&quot;64x64&quot;,&quot;type&quot;:&quot;image/svg+xml&quot;}]}">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
   <style>
-    /* Reset CSS cơ bản để app full viền như app gốc */
-    body {
-      margin: 0;
-      padding: 0;
-      background-color: #0E1714; /* Khớp với mã màu C.bg */
-      -webkit-font-smoothing: antialiased;
-      -moz-osx-font-smoothing: grayscale;
-    }
-    * {
-      box-sizing: border-box;
-    }
-    /* Ẩn mũi tên của input type number cho đẹp hơn */
-    input[type=number]::-webkit-inner-spin-button, 
-    input[type=number]::-webkit-outer-spin-button { 
-      -webkit-appearance: none; 
-      margin: 0; 
-    }
-    input[type=number] {
-      -moz-appearance: textfield;
-    }
+    html, body, #root { height: 100%; }
+    body { background: #09090b; margin: 0; overscroll-behavior: none; }
+    /* Hide scrollbars on horizontal pill rows for cleaner mobile look */
+    *::-webkit-scrollbar { display: none; }
+    * { scrollbar-width: none; }
   </style>
 </head>
 <body>
   <div id="root"></div>
-
-  <script type="text/babel" data-type="module" data-presets="react,env">
+  <script type="text/babel" data-presets="react">
     const { useState, useMemo } = React;
 
-    /* ============================================================
-       THEME — bàn poker 9-max, tông tối, ánh đèn casino
-       ============================================================ */
-    const C = {
-      bg: "#0E1714",
-      panel: "#16221D",
-      panelAlt: "#1C2A23",
-      border: "#2B3F36",
-      borderLight: "#3A5247",
-      gold: "#D9A441",
-      goldBright: "#F0C467",
-      teal: "#3FA796",
-      red: "#E2604F",
-      text: "#F2EDE4",
-      muted: "#8FA199",
+// ============ RANKS / HAND NOTATION ============
+
+const RANKS = ['A','K','Q','J','T','9','8','7','6','5','4','3','2'];
+const rIdx = (r) => RANKS.indexOf(r);
+const rankVal = (r) => 14 - rIdx(r);
+
+function expandToken(tok) {
+  if (/^([2-9TJQKA])\1$/.test(tok)) return [tok];
+  if (/^([2-9TJQKA])\1\+$/.test(tok)) {
+    const i = rIdx(tok[0]); const out = [];
+    for (let j = i; j >= 0; j--) out.push(RANKS[j] + RANKS[j]);
+    return out;
+  }
+  if (/^([2-9TJQKA])([2-9TJQKA])([so])$/.test(tok)) return [tok];
+  if (/^([2-9TJQKA])([2-9TJQKA])([so])\+$/.test(tok)) {
+    const m = tok.match(/^([2-9TJQKA])([2-9TJQKA])([so])\+$/);
+    const hi = m[1], lo = m[2], suit = m[3];
+    const hiI = rIdx(hi), loI = rIdx(lo);
+    const out = [];
+    for (let j = loI; j > hiI; j--) out.push(hi + RANKS[j] + suit);
+    return out;
+  }
+  return [tok];
+}
+const expand = (arr) => arr.flatMap(expandToken);
+
+function handAt(row, col) {
+  if (row === col) return RANKS[row] + RANKS[col];
+  if (col > row) return RANKS[row] + RANKS[col] + 's';
+  return RANKS[col] + RANKS[row] + 'o';
+}
+
+function cardsToHand(c1, c2) {
+  if (!c1 || !c2) return null;
+  const [hi, lo] = rankVal(c1.rank) >= rankVal(c2.rank) ? [c1, c2] : [c2, c1];
+  if (hi.rank === lo.rank) return hi.rank + lo.rank;
+  return hi.rank + lo.rank + (hi.suit === lo.suit ? 's' : 'o');
+}
+
+// ============ PRE-FLOP CHART ============
+
+const POSITIONS = ['BTN','SB','BB','UTG','UTG+1','MP','LJ','HJ','CO'];
+const SITUATIONS = [
+  { key: 'open',    label: 'Mở bài' },
+  { key: 'vsRaise', label: 'Có raise' },
+  { key: 'vs3bet',  label: 'Bị 3-bet' },
+  { key: 'limpers', label: 'Có limper' },
+];
+
+const RAW = {
+  UTG: {
+    open:    { raise: ['77+','ATs+','KJs+','QJs','JTs','AQo+','KQo'], call: [] },
+    vsRaise: { raise: ['QQ+','AKs'], call: ['JJ','AKo'] },
+    vs3bet:  { raise: ['KK+'], call: ['QQ','JJ','AKs'] },
+    limpers: { raise: ['77+','ATs+','KJs+','QJs','JTs','AJo+','KQo'],
+               call: ['22','33','44','55','66','98s','T9s','J9s','T8s'] },
+  },
+  'UTG+1': {
+    open:    { raise: ['66+','ATs+','KTs+','QJs','JTs','AQo+','KQo'], call: [] },
+    vsRaise: { raise: ['QQ+','AKs'], call: ['JJ','TT','AQs','AKo'] },
+    vs3bet:  { raise: ['KK+','AKs'], call: ['QQ','JJ','AKo'] },
+    limpers: { raise: ['66+','ATs+','KTs+','QJs','JTs','AJo+','KQo'],
+               call: ['22','33','44','55','98s','T9s','J9s','T8s'] },
+  },
+  MP: {
+    open:    { raise: ['66+','A9s+','KTs+','QTs+','J9s+','T9s','AJo+','KQo'], call: [] },
+    vsRaise: { raise: ['QQ+','AKs','AKo'], call: ['JJ','TT','AQs'] },
+    vs3bet:  { raise: ['KK+','AKs'], call: ['QQ','JJ','AKo'] },
+    limpers: { raise: ['66+','A9s+','KTs+','QTs+','J9s+','T9s','AJo+','KQo'],
+               call: ['22','33','44','55','87s','76s','T8s','J8s'] },
+  },
+  LJ: {
+    open:    { raise: ['55+','A8s+','KTs+','QTs+','J9s+','T9s','ATo+','KJo+','QJo'], call: [] },
+    vsRaise: { raise: ['JJ+','AQs+','AKo'], call: ['99','TT','AJs','KQs','AQo'] },
+    vs3bet:  { raise: ['QQ+','AKs'], call: ['JJ','TT','AQs','AKo'] },
+    limpers: { raise: ['55+','A8s+','KTs+','QTs+','J9s+','T9s','ATo+','KJo+'],
+               call: ['22','33','44','87s','76s','65s','T8s','J8s'] },
+  },
+  HJ: {
+    open:    { raise: ['55+','A7s+','K9s+','Q9s+','J9s+','T8s+','98s','ATo+','KJo+','QJo'], call: [] },
+    vsRaise: { raise: ['JJ+','AQs+','AKo'], call: ['99','TT','AJs','KQs','AQo'] },
+    vs3bet:  { raise: ['QQ+','AKs'], call: ['JJ','TT','AQs','AKo'] },
+    limpers: { raise: ['66+','A8s+','KTs+','QTs+','J9s+','T9s','ATo+','KJo+'],
+               call: ['22','33','44','55','87s','76s','65s','T8s','J8s'] },
+  },
+  CO: {
+    open:    { raise: ['33+','A2s+','K8s+','Q9s+','J8s+','T8s+','97s+','87s','76s','65s','A9o+','KTo+','QTo+','JTo'], call: [] },
+    vsRaise: { raise: ['TT+','AJs+','KQs','AQo+'], call: ['77','88','99','ATs','KJs','QJs','JTs','AJo','KQo'] },
+    vs3bet:  { raise: ['QQ+','AKs'], call: ['JJ','TT','AQs','AKo'] },
+    limpers: { raise: ['55+','A7s+','K9s+','Q9s+','J9s+','T8s+','98s','ATo+','KJo+','QJo'],
+               call: ['22','33','44','A2s','A3s','A4s','A5s','A6s','K7s','K8s','87s','76s','65s'] },
+  },
+  BTN: {
+    open:    { raise: ['22+','A2s+','K2s+','Q5s+','J7s+','T7s+','96s+','86s+','75s+','64s+','54s','A2o+','K8o+','Q9o+','J9o+','T9o'], call: [] },
+    vsRaise: { raise: ['99+','ATs+','KQs','AJo+','KQo'],
+               call: ['22','33','44','55','66','77','88','A2s','A3s','A4s','A5s','A6s','A7s','A8s','A9s','K9s','KTs','KJs','Q9s','QTs','QJs','J9s','JTs','T9s','98s','87s','76s','65s','ATo'] },
+    vs3bet:  { raise: ['QQ+','AKs'], call: ['JJ','TT','99','AQs','AJs','KQs','AKo'] },
+    limpers: { raise: ['33+','A2s+','K8s+','Q9s+','J9s+','T9s','98s','A9o+','KTo+','QTo+','JTo'],
+               call: ['22','K2s','K3s','K4s','K5s','K6s','K7s','Q5s','Q6s','Q7s','Q8s','J7s','J8s','T7s','T8s','97s','87s','76s','65s','54s'] },
+  },
+  SB: {
+    open:    { raise: ['22+','A2s+','K5s+','Q8s+','J8s+','T8s+','97s+','87s','76s','A2o+','K9o+','QTo+','JTo'], call: [] },
+    vsRaise: { raise: ['99+','AJs+','KQs','AQo+'], call: [] },
+    vs3bet:  { raise: ['QQ+','AKs'], call: ['JJ','TT','AQs','AKo'] },
+    limpers: { raise: ['44+','A8s+','K9s+','Q9s+','J9s+','T9s','ATo+','KJo+','QJo'],
+               call: ['22','33','A2s','A3s','A4s','A5s','A6s','A7s','K5s','K6s','K7s','K8s','Q7s','Q8s','J8s','T8s','98s','87s','76s'] },
+  },
+  BB: {
+    open:    { raise: [], call: [], note: 'Mọi người fold đến BB → bạn ăn pot không tốn. Không cần action.' },
+    vsRaise: { raise: ['JJ+','AQs+','AKo','A5s','A4s'],
+               call: ['22','33','44','55','66','77','88','99','TT','A2s','A3s','A6s','A7s','A8s','A9s','ATs','AJs','K2s','K3s','K4s','K5s','K6s','K7s','K8s','K9s','KTs','KJs','KQs','Q5s','Q6s','Q7s','Q8s','Q9s','QTs','QJs','J7s','J8s','J9s','JTs','T7s','T8s','T9s','96s','97s','98s','86s','87s','75s','76s','65s','54s','ATo','AJo','AQo','K9o','KTo','KJo','KQo','QTo','QJo','JTo'] },
+    vs3bet:  { raise: ['QQ+','AKs'], call: ['JJ','AKo'] },
+    limpers: { raise: ['77+','ATs+','KJs+','QJs','JTs','AJo+','KQo'], call: [],
+               note: 'BB có thể check miễn phí — chỉ raise tay mạnh để value.' },
+  },
+};
+
+const CHARTS = {};
+for (const p of POSITIONS) {
+  CHARTS[p] = {};
+  for (const s of SITUATIONS) {
+    const r = RAW[p][s.key];
+    CHARTS[p][s.key] = {
+      raise: new Set(expand(r.raise || [])),
+      call: new Set(expand(r.call || [])),
+      note: r.note,
     };
+  }
+}
 
-    const FONT_IMPORT = `@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700;800&display=swap');`;
+function getAction(pos, sit, hand) {
+  const c = CHARTS[pos][sit];
+  if (c.raise.has(hand)) return 'RAISE';
+  if (c.call.has(hand)) return 'CALL';
+  return 'FOLD';
+}
 
-    /* ============================================================
-       BÀI & VỊ TRÍ
-       ============================================================ */
-    const RANK_LABELS = ["2","3","4","5","6","7","8","9","T","J","Q","K","A"];
-    const RANK_VALUES = RANK_LABELS.map((_, i) => i + 2); // 2..14
-    const SUITS = ["s", "h", "d", "c"];
-    const SUIT_SYMBOL = { s: "♠", h: "♥", d: "♦", c: "♣" };
-    const SUIT_COLOR = { s: C.text, c: C.text, h: C.red, d: C.red };
+function getSizing(pos, sit, action) {
+  if (action !== 'RAISE') return '';
+  switch (sit) {
+    case 'open':    return pos === 'SB' ? '3bb' : '2.5bb';
+    case 'vsRaise': return pos === 'BB' || pos === 'SB' ? '3-bet 12bb' : '3-bet 10bb';
+    case 'vs3bet':  return '4-bet ~24bb';
+    case 'limpers': return 'Iso 4bb + 1bb/limper';
+    default: return '';
+  }
+}
 
-    const POSITIONS = ["UTG", "UTG1", "MP1", "MP2", "HJ", "CO", "BTN", "SB", "BB"];
-    const POSITION_LABEL = {
-      UTG: "UTG", UTG1: "UTG+1", MP1: "MP1", MP2: "MP2", HJ: "HJ",
-      CO: "CO", BTN: "BTN", SB: "SB", BB: "BB",
+// ============ CARDS ============
+
+const SUITS = ['s','h','d','c'];
+const SUIT_SYMBOL = { s: '♠', h: '♥', d: '♦', c: '♣' };
+const SUIT_COLOR  = { s: 'text-zinc-100', h: 'text-rose-400', d: 'text-sky-400', c: 'text-emerald-400' };
+const cardKey = (c) => c ? c.rank + c.suit : null;
+
+// ============ HAND CLASSIFIER (works for flop, turn, river) ============
+
+function detectTexture(board) {
+  const bSuits = board.map(c => c.suit);
+  const bRanks = board.map(c => c.rank);
+  const bVals = bRanks.map(rankVal);
+
+  const sCount = {};
+  bSuits.forEach(s => sCount[s] = (sCount[s] || 0) + 1);
+  const rCount = {};
+  bRanks.forEach(r => rCount[r] = (rCount[r] || 0) + 1);
+
+  const maxSuit = Math.max(...Object.values(sCount));
+  const isPaired = Object.values(rCount).some(c => c >= 2);
+  const isMonotone = maxSuit === board.length;
+  // Flushy if "many" same suit relative to board size (2/3 on flop, 3/4 on turn, 4/5 on river)
+  const flushy = maxSuit >= board.length - 1;
+
+  const sortedVals = [...new Set(bVals)].sort((a, b) => b - a);
+  let isConnected = false;
+  if (sortedVals.length >= 3) {
+    for (let i = 0; i <= sortedVals.length - 3; i++) {
+      if (sortedVals[i] - sortedVals[i + 2] <= 4) { isConnected = true; break; }
+    }
+  }
+
+  if (isPaired) return 'paired';
+  if (isMonotone) return 'monotone';
+  if (flushy && isConnected) return 'wet';
+  if (flushy || isConnected) return 'semiwet';
+  return 'dry';
+}
+
+function classifyHand(hole, board, stage) {
+  const all = [...hole, ...board];
+  const ranks = all.map(c => c.rank);
+  const suits = all.map(c => c.suit);
+  const holeRanks = hole.map(c => c.rank);
+  const boardRanks = board.map(c => c.rank);
+
+  const rankCounts = {};
+  ranks.forEach(r => rankCounts[r] = (rankCounts[r] || 0) + 1);
+  const suitCounts = {};
+  suits.forEach(s => suitCounts[s] = (suitCounts[s] || 0) + 1);
+
+  const sortedCounts = Object.entries(rankCounts)
+    .sort((a, b) => b[1] - a[1] || rankVal(b[0]) - rankVal(a[0]));
+  const topCount = sortedCounts[0][1];
+  const secondCount = sortedCounts[1]?.[1] || 0;
+
+  const isFlush = Object.values(suitCounts).some(c => c >= 5);
+
+  const vals = [...new Set(ranks.map(rankVal))].sort((a, b) => a - b);
+  if (vals.includes(14)) vals.unshift(1);
+  let isStraight = false;
+  for (let i = 0; i <= vals.length - 5; i++) {
+    if (vals[i + 4] - vals[i] === 4) { isStraight = true; break; }
+  }
+
+  let made, madeDetail = '';
+  if (isStraight && isFlush) made = 'STRAIGHT_FLUSH';
+  else if (topCount === 4) made = 'QUADS';
+  else if (topCount === 3 && secondCount === 2) made = 'FULL_HOUSE';
+  else if (isFlush) made = 'FLUSH';
+  else if (isStraight) made = 'STRAIGHT';
+  else if (topCount === 3) made = 'TRIPS_OR_SET';
+  else if (topCount === 2 && secondCount === 2) made = 'TWO_PAIR';
+  else if (topCount === 2) made = 'PAIR';
+  else made = 'HIGH_CARD';
+
+  if (made === 'TRIPS_OR_SET') {
+    const tripRank = sortedCounts[0][0];
+    madeDetail = holeRanks.filter(r => r === tripRank).length === 2 ? 'Set' : 'Trips';
+  }
+
+  if (made === 'TWO_PAIR') {
+    const pairs = sortedCounts.filter(([, c]) => c === 2).map(([r]) => r);
+    const topBoardVal = Math.max(...boardRanks.map(rankVal));
+    const usesTopBoard = pairs.some(p => rankVal(p) === topBoardVal);
+    madeDetail = usesTopBoard ? 'Two pair (top)' : 'Two pair';
+  }
+
+  if (made === 'PAIR') {
+    const pairRank = sortedCounts[0][0];
+    const pairV = rankVal(pairRank);
+    const boardVals = boardRanks.map(rankVal).sort((a, b) => b - a);
+    const isPocket = holeRanks[0] === holeRanks[1];
+
+    if (isPocket && pairRank === holeRanks[0]) {
+      if (pairV > boardVals[0]) madeDetail = 'Overpair';
+      else if (pairV > boardVals[1]) madeDetail = 'Pocket vào giữa';
+      else madeDetail = 'Pocket thấp';
+    } else {
+      if (pairV === boardVals[0]) {
+        const kicker = holeRanks.find(r => r !== pairRank);
+        const kV = kicker ? rankVal(kicker) : 0;
+        if (kV >= 13) madeDetail = 'Top pair top kicker';
+        else if (kV >= 11) madeDetail = 'Top pair kicker tốt';
+        else madeDetail = 'Top pair kicker yếu';
+      } else if (pairV === boardVals[1]) madeDetail = 'Second pair';
+      else madeDetail = 'Bottom pair';
+    }
+  }
+
+  // Draws (suppress on river)
+  const isRiver = stage === 'river';
+  const hasFlushDraw = !isFlush && !isRiver && Object.values(suitCounts).some(c => c === 4);
+  let drawType = null;
+  if (!isStraight && !isRiver) {
+    const v = [...new Set(ranks.map(rankVal))].sort((a, b) => a - b);
+    if (v.includes(14)) v.unshift(1);
+    let oesd = false, gutshot = false;
+    for (let i = 0; i <= v.length - 4; i++) {
+      const w = v.slice(i, i + 4);
+      if (w[3] - w[0] === 3) {
+        if (w[0] !== 1 && w[3] !== 14) oesd = true;
+        else gutshot = true;
+      } else if (w[3] - w[0] === 4) gutshot = true;
+    }
+    if (oesd) drawType = 'OESD';
+    else if (gutshot) drawType = 'GUTSHOT';
+  }
+
+  let tier;
+  if (['STRAIGHT_FLUSH','QUADS','FULL_HOUSE','FLUSH','STRAIGHT','TRIPS_OR_SET','TWO_PAIR'].includes(made)) tier = 'monster';
+  else if (made === 'PAIR') {
+    if (['Overpair','Top pair top kicker','Top pair kicker tốt'].includes(madeDetail)) tier = 'strong';
+    else tier = 'medium';
+  } else if (hasFlushDraw && drawType === 'OESD') tier = 'strong';
+  else if (hasFlushDraw || drawType === 'OESD') tier = 'draw';
+  else if (drawType === 'GUTSHOT') tier = 'weak';
+  else tier = 'air';
+
+  const texture = detectTexture(board);
+  const handLabel = madeLabel(made, madeDetail, drawType, hasFlushDraw);
+
+  return { made, madeDetail, drawType, hasFlushDraw, tier, texture, handLabel };
+}
+
+function madeLabel(made, detail, draw, fd) {
+  const parts = [];
+  switch (made) {
+    case 'STRAIGHT_FLUSH': parts.push('Thùng phá sảnh'); break;
+    case 'QUADS': parts.push('Tứ quý'); break;
+    case 'FULL_HOUSE': parts.push('Cù lũ'); break;
+    case 'FLUSH': parts.push('Thùng'); break;
+    case 'STRAIGHT': parts.push('Sảnh'); break;
+    case 'TRIPS_OR_SET': parts.push(detail); break;
+    case 'TWO_PAIR': parts.push(detail); break;
+    case 'PAIR': parts.push(detail); break;
+    case 'HIGH_CARD': parts.push('Không cặp'); break;
+  }
+  const draws = [];
+  if (fd) draws.push('rút thùng');
+  if (draw === 'OESD') draws.push('sảnh mở 2 đầu');
+  else if (draw === 'GUTSHOT') draws.push('sảnh trong');
+  if (draws.length) parts.push('+ ' + draws.join(' + '));
+  return parts.join(' ');
+}
+
+const TEXTURE_LABEL = {
+  dry: 'khô · rainbow',
+  semiwet: 'semi-wet',
+  wet: 'ướt · nhiều chất + nối',
+  monotone: 'monotone',
+  paired: 'paired · có cặp',
+};
+
+// ============ STREET RECOMMENDATION ============
+
+const OPP_ACTIONS = [
+  { key: 'check',  label: 'Check / Mình act' },
+  { key: 'small',  label: 'Bet ≤⅓' },
+  { key: 'medium', label: 'Bet ~½' },
+  { key: 'large',  label: 'Bet ≥⅔' },
+  { key: 'allin',  label: 'All-in' },
+];
+
+function recommendStreet(stage, tier, texture, isAggressor, oppAction) {
+  const isDry = texture === 'dry';
+  const isRiver = stage === 'river';
+  const isTurn = stage === 'turn';
+
+  // River: missed draws become air, weak hands stay weak
+  let t = tier;
+  if (isRiver && (t === 'draw' || t === 'weak')) t = 'air';
+
+  // === CASE A: Opp checked / we act first ===
+  if (oppAction === 'check') {
+    if (t === 'monster') return {
+      action: 'BET',
+      sizing: isRiver ? '75-100% pot' : isTurn ? '66% pot' : '50-66% pot',
+      reason: isRiver ? 'River value: bet to, polarized.' : 'Tay to → value bet build pot.',
+      color: 'raise'
     };
-
-    function rankLabel(r) { return RANK_LABELS[r - 2]; }
-    function cardKey(c) { return `${c.r}${c.s}`; }
-    function cardLabel(c) { return `${rankLabel(c.r)}${SUIT_SYMBOL[c.s]}`; }
-
-    /* ============================================================
-       CHEN FORMULA — ước lượng độ mạnh bài preflop
-       ============================================================ */
-    function chenScore(c1, c2) {
-      const val = (r) => {
-        if (r === 14) return 10;
-        if (r === 13) return 8;
-        if (r === 12) return 7;
-        if (r === 11) return 6;
-        if (r === 10) return 5;
-        return r / 2;
-      };
-      const high = Math.max(c1.r, c2.r);
-      const low = Math.min(c1.r, c2.r);
-      const isPair = c1.r === c2.r;
-      const suited = c1.s === c2.s;
-
-      let score = val(high);
-      if (isPair) score = Math.max(val(high) * 2, 5);
-
-      if (suited) score += 2;
-
-      if (!isPair) {
-        const gap = high - low - 1;
-        let penalty = 0;
-        if (gap === 0) penalty = 0;
-        else if (gap === 1) penalty = 1;
-        else if (gap === 2) penalty = 2;
-        else if (gap === 3) penalty = 4;
-        else penalty = 5;
-        score -= penalty;
-        if ((gap === 0 || gap === 1) && high <= 11) score += 1; // bonus nối thấp hơn Q
-      }
-      return Math.round(score * 2) / 2; // làm tròn 0.5
-    }
-
-    /* Ngưỡng mở bài (RFI) theo vị trí, 9-max, đơn giản hóa */
-    const RFI_THRESHOLD = {
-      UTG: 9, UTG1: 8.5, MP1: 8, MP2: 7.5, HJ: 6.5, CO: 5.5, BTN: 4.5, SB: 5.5, BB: null,
+    if (t === 'strong') return {
+      action: 'BET',
+      sizing: isRiver ? '50% pot' : '33-50% pot',
+      reason: isRiver ? 'River value vừa, target calling station.' : 'Hand mạnh → cbet value/protect.',
+      color: 'raise'
     };
+    if (t === 'medium') {
+      if (isRiver) return { action: 'CHECK', sizing: 'showdown', reason: 'River pair vừa: check, không turn into bluff.', color: 'call' };
+      if (isAggressor && isDry) return { action: 'CBET nhỏ', sizing: '33% pot', reason: 'Pair vừa + dry → cbet nhỏ ép fold.', color: 'call' };
+      return { action: 'CHECK', sizing: '', reason: 'Pair vừa + wet/OOP → check.', color: 'call' };
+    }
+    if (t === 'draw') {
+      if (isTurn) return { action: 'CHECK / BET 50%', sizing: '', reason: 'Turn draw: equity giảm, semi-bluff cẩn thận.', color: 'call' };
+      return { action: 'BET', sizing: '50% pot', reason: 'Big draw → semi-bluff.', color: 'raise' };
+    }
+    if (t === 'weak') {
+      if (isAggressor && isDry) return { action: 'CBET nhỏ', sizing: '25-33% pot', reason: 'Tay yếu + dry → equity denial.', color: 'call' };
+      return { action: 'CHECK', sizing: '', reason: 'Tay yếu → check.', color: 'call' };
+    }
+    // air
+    if (isRiver && isAggressor) return { action: 'BLUFF hoặc CHECK', sizing: '66-100% nếu bluff', reason: 'River bluff polarized: chỉ khi story make sense.', color: 'call' };
+    if (isAggressor && isDry && !isRiver) return { action: 'CBET bluff', sizing: '33% pot', reason: 'Air + dry → cbet bluff range advantage.', color: 'raise' };
+    return { action: 'CHECK', sizing: '', reason: 'Air → check, give up.', color: 'call' };
+  }
 
-    const FACING_LABEL = {
-      none: "Mọi người fold / chưa ai vào",
-      limped: "Có người limp, chưa ai raise",
-      open: "Có 1 raise",
-      "3bet": "Đã có 3-bet",
-      "4bet": "Đã có 4-bet",
+  // === CASE B: Facing bet ===
+  if (t === 'monster') {
+    if (oppAction === 'allin') return { action: 'CALL', sizing: '', reason: 'Snap call.', color: 'raise' };
+    if (oppAction === 'large') return { action: 'CALL hoặc RAISE', sizing: 'tuỳ board', reason: 'Tay to → call trap hoặc raise.', color: 'raise' };
+    return { action: 'RAISE', sizing: '~3x bet', reason: 'Tay to → raise value/protect.', color: 'raise' };
+  }
+  if (t === 'strong') {
+    if (isRiver) {
+      if (oppAction === 'small' || oppAction === 'medium') return { action: 'CALL', sizing: '', reason: 'River bluff catch.', color: 'call' };
+      if (oppAction === 'large') return { action: 'CALL / FOLD close', sizing: 'lean fold vs tight', reason: 'River bet to: close decision.', color: 'call' };
+      return { action: 'FOLD', sizing: '', reason: 'River all-in: strong vẫn fold vs nut range.', color: 'fold' };
+    }
+    if (oppAction === 'small') return { action: 'CALL / RAISE', sizing: 'raise vs draw board', reason: 'Hand mạnh build pot, charge draw.', color: 'raise' };
+    if (oppAction === 'medium') return { action: 'CALL', sizing: '', reason: 'Pot control, để họ bluff tiếp.', color: 'call' };
+    if (oppAction === 'large') return { action: 'CALL thận trọng', sizing: 'vs wet board', reason: 'Bet to → cảnh giác nhưng vẫn call.', color: 'call' };
+    return { action: 'CALL', sizing: '', reason: 'Overpair/TPTK vs all-in flop/turn → call.', color: 'call' };
+  }
+  if (t === 'medium') {
+    if (isRiver) {
+      if (oppAction === 'small') return { action: 'CALL', sizing: '', reason: 'River bluff catch giá rẻ.', color: 'call' };
+      return { action: 'FOLD', sizing: '', reason: 'River bet vừa/to → fold pair vừa.', color: 'fold' };
+    }
+    if (oppAction === 'small') return { action: 'CALL', sizing: '', reason: 'Bluff catch giá rẻ.', color: 'call' };
+    if (oppAction === 'medium' && isTurn) return { action: 'FOLD', sizing: 'lean fold turn', reason: 'Turn bet vừa: pair vừa thường lỗ.', color: 'fold' };
+    if (oppAction === 'medium') return { action: 'CALL / FOLD', sizing: 'close', reason: 'Close — lean fold multi-way.', color: 'call' };
+    return { action: 'FOLD', sizing: '', reason: 'Bet to → pair vừa không đủ.', color: 'fold' };
+  }
+  if (t === 'draw') {
+    if (oppAction === 'small') return { action: 'CALL', sizing: '', reason: 'Pot odds dư cho draw.', color: 'call' };
+    if (oppAction === 'medium') return {
+      action: isTurn ? 'CALL nếu combo, FOLD nếu đơn' : 'CALL',
+      sizing: '',
+      reason: isTurn ? 'Turn draw: equity còn ~20%, combo có đủ, đơn không.' : 'Big draw đủ equity vs bet vừa.',
+      color: 'call'
     };
+    if (oppAction === 'large') return { action: 'CALL nếu combo · FOLD nếu đơn', sizing: 'cần ~30%+', reason: 'Combo (FD+OESD) có đủ; draw đơn không.', color: 'call' };
+    return { action: 'FOLD', sizing: '', reason: 'All-in → mất implied, draw không call được.', color: 'fold' };
+  }
+  // weak or air
+  return { action: 'FOLD', sizing: '', reason: 'Tay yếu / air → fold.', color: 'fold' };
+}
 
-    function getPreflopAdvice({ position, score, facing, callersBefore }) {
-      const n = Math.max(callersBefore || 0, 0);
+// ============ STYLES ============
 
-      // BB: action gấp khúc về tới bạn vì cả bàn fold hết -> ván tự kết thúc, không có quyết định thật sự
-      if (position === "BB" && facing === "none") {
-        return {
-          action: "Check (bạn tự thắng pot)",
-          reason: "Cả bàn đã fold trước khi tới lượt bạn, không còn ai để chơi tiếp nên bạn ăn blind luôn, không cần đánh giá bài.",
-          score,
-        };
+const ACTION_STYLES = {
+  RAISE: { bg: 'bg-emerald-600', text: 'text-emerald-50' },
+  CALL:  { bg: 'bg-amber-600',   text: 'text-amber-50' },
+  FOLD:  { bg: 'bg-zinc-800',    text: 'text-zinc-500' },
+};
+const FLOP_COLOR_STYLE = {
+  raise: { bg: 'bg-emerald-600', text: 'text-emerald-50' },
+  call:  { bg: 'bg-amber-600',   text: 'text-amber-50' },
+  fold:  { bg: 'bg-zinc-800',    text: 'text-zinc-400' },
+};
+
+// ============ SHARED COMPONENTS ============
+
+function Pill({ active, onClick, children, compact }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`${compact ? 'px-2.5 py-1 text-xs' : 'px-3 py-1.5 text-sm'} rounded-full font-medium tracking-tight whitespace-nowrap transition ${
+        active ? 'bg-zinc-100 text-zinc-950' : 'bg-zinc-900 text-zinc-400 border border-zinc-800'
+      }`}
+    >{children}</button>
+  );
+}
+
+function CardSlot({ card, active, onClick, large }) {
+  const size = large ? 'h-20 w-14' : 'h-16 w-12';
+  return (
+    <button
+      onClick={onClick}
+      className={`relative ${size} rounded-lg flex flex-col items-center justify-center border-2 transition ${
+        active ? 'border-zinc-100 bg-zinc-800' :
+        card ? 'border-zinc-700 bg-zinc-900' :
+        'border-dashed border-zinc-700 bg-zinc-900/40'
+      }`}
+    >
+      {card ? (
+        <>
+          <div className={`${large ? 'text-2xl' : 'text-xl'} font-bold leading-none text-zinc-100`}>{card.rank}</div>
+          <div className={`${large ? 'text-xl' : 'text-lg'} leading-none mt-1 ${SUIT_COLOR[card.suit]}`}>{SUIT_SYMBOL[card.suit]}</div>
+        </>
+      ) : (
+        <div className="text-zinc-700 text-2xl leading-none">+</div>
+      )}
+    </button>
+  );
+}
+
+function CardPicker({ usedKeys, onPick }) {
+  const [pendingRank, setPendingRank] = useState(null);
+
+  function handleSuit(suit) {
+    if (!pendingRank) return;
+    if (usedKeys.has(pendingRank + suit)) return;
+    onPick({ rank: pendingRank, suit });
+    setPendingRank(null);
+  }
+  const rankFullyUsed = (r) => SUITS.every(s => usedKeys.has(r + s));
+
+  return (
+    <div>
+      <div className="text-[10px] uppercase tracking-widest text-zinc-500 mb-1.5">
+        {pendingRank
+          ? <>Bước 2 · Chọn chất cho <span className="text-zinc-100 font-mono font-bold text-sm">{pendingRank}</span></>
+          : <>Bước 1 · Chọn số</>}
+      </div>
+      <div className="grid grid-cols-7 gap-1.5 mb-2.5">
+        {RANKS.map(r => {
+          const full = rankFullyUsed(r);
+          const active = pendingRank === r;
+          return (
+            <button
+              key={r}
+              disabled={full}
+              onClick={() => setPendingRank(r)}
+              className={`py-3 text-lg font-bold rounded-lg transition ${
+                full ? 'bg-zinc-900 text-zinc-700 border border-zinc-900' :
+                active ? 'bg-zinc-100 text-zinc-950' :
+                'bg-zinc-900 text-zinc-100 border border-zinc-800 active:bg-zinc-800'
+              }`}
+            >{r}</button>
+          );
+        })}
+      </div>
+      <div className="grid grid-cols-4 gap-2">
+        {SUITS.map(s => {
+          const taken = pendingRank && usedKeys.has(pendingRank + s);
+          const disabled = !pendingRank || taken;
+          return (
+            <button
+              key={s}
+              disabled={disabled}
+              onClick={() => handleSuit(s)}
+              className={`py-4 text-3xl rounded-lg transition ${SUIT_COLOR[s]} ${
+                disabled ? 'opacity-25 bg-zinc-900 border border-zinc-900' :
+                'bg-zinc-900 border-2 border-zinc-700 active:bg-zinc-800'
+              }`}
+            >{SUIT_SYMBOL[s]}</button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ============ GTO MATRIX (display only, after picking cards) ============
+
+function GTOMatrix({ position, situation, highlightedHand }) {
+  const cells = useMemo(() => {
+    const arr = [];
+    for (let r = 0; r < 13; r++) {
+      for (let c = 0; c < 13; c++) {
+        const hand = handAt(r, c);
+        arr.push({ hand, action: getAction(position, situation, hand) });
       }
-
-      // Pot đã có người limp (gọi), CHƯA ai raise — đây là tình huống dễ bị tính nhầm thành "check" nếu không tách riêng
-      if (facing === "limped") {
-        if (position === "BB") {
-          // BB luôn được xem flop miễn phí nếu check; bài mạnh nên raise isolate để lấy giá trị thay vì check cho không
-          const isoTh = 8;
-          if (score >= isoTh) {
-            return {
-              action: `Raise Isolate (~${3 + n}bb)`,
-              reason: `Chen score ${score} là bài mạnh (vd AA, KK, AK...). Check ở đây là phí giá trị — nên raise isolate để loại bớt ${n} người limp và xây pot ngay từ preflop.`,
-              score,
-            };
-          }
-          return {
-            action: "Check",
-            reason: `Bạn đã có sẵn BB nên check không mất thêm gì. Chen score ${score} chưa đủ mạnh để raise isolate (ngưỡng ${isoTh}), cứ xem flop miễn phí với ${n} người limp.`,
-            score,
-          };
-        }
-        const isoTh = RFI_THRESHOLD[position] ?? 6;
-        const limpCallTh = isoTh - 2.5;
-        if (score >= isoTh) {
-          return {
-            action: `Raise Isolate (~${3 + n}bb)`,
-            reason: `Chen score ${score} ≥ ngưỡng isolate của ${POSITION_LABEL[position]} (${isoTh}). Nên raise để loại người limp yếu và chủ động kiểm soát pot/vị trí, thay vì limp theo.`,
-            score,
-          };
-        }
-        if (score >= limpCallTh) {
-          return {
-            action: "Limp theo / Call",
-            reason: `Bài dạng speculative (suited connector, túi đôi nhỏ...), giá đã rẻ vì có ${n} người limp trước, theo để ăn implied odds khi trúng bộ/sảnh/thùng.`,
-            score,
-          };
-        }
-        return {
-          action: "Fold",
-          reason: `Chen score ${score} dưới ngưỡng tham gia một pot đã có limper (${limpCallTh}), nên bỏ.`,
-          score,
-        };
-      }
-
-      if (facing === "none") {
-        const th = RFI_THRESHOLD[position];
-        if (score >= th) {
-          return {
-            action: "Raise (mở đầu ~2.5–3bb)",
-            reason: `Chen score ${score} ≥ ngưỡng mở của ${POSITION_LABEL[position]} (${th}). Bài đủ mạnh để raise đầu tiên, không nên limp vì mất chủ động.`,
-            score,
-          };
-        }
-        return {
-          action: "Fold",
-          reason: `Chen score ${score} < ngưỡng mở của ${POSITION_LABEL[position]} (${th}). Bài chưa đủ mạnh để vào ở vị trí này.`,
-          score,
-        };
-      }
-
-      if (facing === "open") {
-        const lateAggro = ["BTN", "CO", "SB"].includes(position);
-        const threeBetTh = lateAggro ? 9.5 : 10.5;
-        const baseCallTh = position === "BB" ? 4 : Math.max((RFI_THRESHOLD[position] ?? 6) - 1, 4.5);
-        const callTh = baseCallTh + n * 0.5;
-        if (score >= threeBetTh) {
-          return {
-            action: "3-bet (Raise lại)",
-            reason: `Chen score ${score} đủ mạnh để 3-bet lấy giá trị${lateAggro ? " — ở vị trí cuối bàn nên 3-bet rộng hơn để tận dụng fold equity" : ""}.`,
-            score,
-          };
-        }
-        if (score >= callTh) {
-          return {
-            action: "Call",
-            reason: `Chen score ${score} đủ để theo kèo open, vị trí ${POSITION_LABEL[position]} (ngưỡng call ~${callTh}${position === "BB" ? ", BB được giá tốt nên defend rộng" : ""}).`,
-            score,
-          };
-        }
-        return {
-          action: "Fold",
-          reason: `Chen score ${score} dưới ngưỡng call (~${callTh}) khi có ${n} người đã vào trước, nên bỏ.`,
-          score,
-        };
-      }
-
-      if (facing === "3bet") {
-        const fourBetTh = 12.5;
-        const callTh = 10;
-        if (score >= fourBetTh) return { action: "4-bet / All-in", reason: `Chen score ${score} là bài top (QQ+/AK), nên 4-bet hoặc shove tùy độ sâu stack.`, score };
-        if (score >= callTh) return { action: "Call", reason: `Chen score ${score} đủ mạnh để theo 3-bet (QQ-/AK loại).`, score };
-        return { action: "Fold", reason: `Chen score ${score} không đủ để theo một 3-bet, nên bỏ trừ khi có lý do khác (đọc bài đối thủ).`, score };
-      }
-
-      // facing 4bet
-      const callTh = 13;
-      if (score >= callTh) return { action: "Call / All-in", reason: `Chen score ${score} ở nhóm cực mạnh (KK+/AA), có thể theo hoặc shove.`, score };
-      return { action: "Fold", reason: `Đối mặt 4-bet, bài cần cực mạnh mới theo được. Chen score ${score} chưa đủ.`, score };
     }
+    return arr;
+  }, [position, situation]);
 
-    /* ============================================================
-       ĐÁNH GIÁ BÀI POSTFLOP
-       ============================================================ */
-    function bestStraightHigh(descUnique) {
-      for (let i = 0; i <= descUnique.length - 5; i++) {
-        let ok = true;
-        for (let j = 0; j < 4; j++) {
-          if (descUnique[i + j] - descUnique[i + j + 1] !== 1) { ok = false; break; }
-        }
-        if (ok) return descUnique[i];
-      }
-      return null;
-    }
+  const sitLabel = SITUATIONS.find(s => s.key === situation).label;
 
-    function evaluateHand(cards) {
-      const rankCounts = {};
-      const suitCounts = {};
-      cards.forEach((c) => {
-        rankCounts[c.r] = (rankCounts[c.r] || 0) + 1;
-        suitCounts[c.s] = (suitCounts[c.s] || 0) + 1;
-      });
+  return (
+    <div>
+      <div className="text-[10px] uppercase tracking-widest text-zinc-500 mb-1.5">
+        GTO Map · {position} · {sitLabel}
+      </div>
+      <div className="grid gap-px bg-zinc-950 rounded-md overflow-hidden border border-zinc-900"
+           style={{ gridTemplateColumns: 'repeat(13, minmax(0, 1fr))' }}>
+        {cells.map(({ hand, action }) => {
+          const s = ACTION_STYLES[action];
+          const isHigh = hand === highlightedHand;
+          return (
+            <div
+              key={hand}
+              className={`aspect-square flex items-center justify-center font-mono leading-none text-[9px] ${s.bg} ${s.text} ${
+                isHigh ? 'ring-2 ring-zinc-100 ring-inset z-10 relative' : ''
+              }`}
+            >{hand}</div>
+          );
+        })}
+      </div>
+      <div className="flex justify-center gap-4 mt-2.5 text-[10px] text-zinc-500">
+        <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm bg-emerald-600"/>Raise</div>
+        <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm bg-amber-600"/>Call</div>
+        <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm bg-zinc-800 border border-zinc-700"/>Fold</div>
+      </div>
+    </div>
+  );
+}
 
-      let flushSuit = null;
-      SUITS.forEach((s) => { if ((suitCounts[s] || 0) >= 5) flushSuit = s; });
+// ============ PRE-FLOP STAGE ============
 
-      let distinct = Array.from(new Set(cards.map((c) => c.r))).sort((a, b) => b - a);
-      let forStraight = [...distinct];
-      if (distinct.includes(14)) forStraight.push(1);
-      forStraight = Array.from(new Set(forStraight)).sort((a, b) => b - a);
-      const straightHigh = bestStraightHigh(forStraight);
+function PreflopStage({ position, setPosition, situation, setSituation, holeCards, setHoleCards, onContinue, onReset }) {
+  const [activeSlot, setActiveSlot] = useState(0);
 
-      let straightFlushHigh = null;
-      if (flushSuit) {
-        let fr = Array.from(new Set(cards.filter((c) => c.s === flushSuit).map((c) => c.r))).sort((a, b) => b - a);
-        let frs = [...fr];
-        if (fr.includes(14)) frs.push(1);
-        frs = Array.from(new Set(frs)).sort((a, b) => b - a);
-        straightFlushHigh = bestStraightHigh(frs);
-      }
+  const usedKeys = new Set(holeCards.filter(Boolean).map(cardKey));
+  const note = CHARTS[position][situation].note;
+  const isBBopen = position === 'BB' && situation === 'open';
+  const bothFilled = holeCards[0] && holeCards[1];
 
-      const countsArr = Object.entries(rankCounts)
-        .map(([r, c]) => ({ r: Number(r), c }))
-        .sort((a, b) => b.c - a.c || b.r - a.r);
+  function placeAt(idx, card) {
+    const next = [...holeCards];
+    next[idx] = card;
+    setHoleCards(next);
+    const nextEmpty = next.findIndex(c => c === null);
+    setActiveSlot(nextEmpty >= 0 ? nextEmpty : null);
+  }
+  function pickCard(card) {
+    let idx = activeSlot;
+    if (idx === null) idx = holeCards.findIndex(c => c === null);
+    if (idx < 0 || idx === undefined) return;
+    placeAt(idx, card);
+  }
+  function handleSlotClick(idx) {
+    if (activeSlot === idx && holeCards[idx]) {
+      const next = [...holeCards]; next[idx] = null;
+      setHoleCards(next); setActiveSlot(idx);
+    } else setActiveSlot(idx);
+  }
 
-      let category = 0, label = "Mặt bài cao (High card)", detail = {};
-      if (straightFlushHigh) {
-        category = 8;
-        label = straightFlushHigh === 14 ? "Thùng phá sảnh Hoàng gia" : "Thùng phá sảnh";
-      } else if (countsArr[0].c === 4) {
-        category = 7; label = "Tứ quý"; detail.quadRank = countsArr[0].r;
-      } else if (countsArr[0].c === 3 && countsArr[1] && countsArr[1].c >= 2) {
-        category = 6; label = "Cù lũ (Full House)"; detail.tripRank = countsArr[0].r; detail.pairRank = countsArr[1].r;
-      } else if (flushSuit) {
-        category = 5; label = "Thùng (Flush)";
-      } else if (straightHigh) {
-        category = 4; label = "Sảnh (Straight)"; detail.high = straightHigh;
-      } else if (countsArr[0].c === 3) {
-        category = 3; label = "Bộ ba (Trips/Set)"; detail.tripRank = countsArr[0].r;
-      } else if (countsArr[0].c === 2 && countsArr[1] && countsArr[1].c === 2) {
-        category = 2; label = "Hai đôi"; detail.pairs = [countsArr[0].r, countsArr[1].r];
-      } else if (countsArr[0].c === 2) {
-        category = 1; label = "Một đôi"; detail.pairRank = countsArr[0].r;
-      }
+  const handClass = bothFilled ? cardsToHand(holeCards[0], holeCards[1]) : null;
+  const action = handClass && !isBBopen ? getAction(position, situation, handClass) : null;
+  const sizing = action ? getSizing(position, situation, action) : '';
+  const style = action ? ACTION_STYLES[action] : null;
+  const sitLabel = SITUATIONS.find(s => s.key === situation).label;
 
-      return { category, label, detail, countsArr };
-    }
+  return (
+    <div className="flex flex-col h-full">
+      <div className="px-3 pt-3 pb-1 flex items-center justify-between">
+        <div className="text-xs uppercase tracking-[0.2em] text-zinc-500 font-semibold">Poker · GTO</div>
+        <div className="text-[10px] text-zinc-600">Pre-flop</div>
+      </div>
 
-    function getPairContext(pairRank, holeCards, board) {
-      const isPocket = holeCards.length === 2 && holeCards[0].r === holeCards[1].r;
-      const boardRanksDesc = Array.from(new Set(board.map((c) => c.r))).sort((a, b) => b - a);
-      if (isPocket && pairRank === holeCards[0].r && !board.some((c) => c.r === pairRank)) {
-        if (boardRanksDesc.length === 0) return { tag: "pocket", text: "Túi đôi" };
-        if (pairRank > boardRanksDesc[0]) return { tag: "top", text: "Túi đôi cao hơn board (Overpair)" };
-        return { tag: "mid", text: "Túi đôi thấp hơn 1 phần board" };
-      }
-      if (boardRanksDesc.length === 0) return { tag: "mid", text: "Một đôi" };
-      if (pairRank === boardRanksDesc[0]) return { tag: "top", text: "Top pair" };
-      if (pairRank === boardRanksDesc[boardRanksDesc.length - 1] && boardRanksDesc.length >= 2)
-        return { tag: "bottom", text: "Bottom pair" };
-      return { tag: "mid", text: "Middle pair" };
-    }
+      <div className="px-3 pt-1">
+        <div className="text-[10px] uppercase tracking-widest text-zinc-500 mb-1.5">Vị trí</div>
+        <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-3 px-3">
+          {POSITIONS.map(p => (
+            <Pill key={p} active={position === p} onClick={() => setPosition(p)}>{p}</Pill>
+          ))}
+        </div>
+      </div>
 
-    function detectDraws(allCards, holeCards, board, category) {
-      if (category >= 3 || board.length === 0 || board.length >= 5) {
-        return { flushDraw: false, straightOuts: 0, overcardOuts: 0, totalOuts: 0 };
-      }
-      const suitCounts = {};
-      allCards.forEach((c) => { suitCounts[c.s] = (suitCounts[c.s] || 0) + 1; });
-      let flushDraw = false;
-      SUITS.forEach((s) => { if ((suitCounts[s] || 0) === 4) flushDraw = true; });
+      <div className="px-3 pt-2">
+        <div className="text-[10px] uppercase tracking-widest text-zinc-500 mb-1.5">Tình huống</div>
+        <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-3 px-3">
+          {SITUATIONS.map(s => (
+            <Pill key={s.key} active={situation === s.key} onClick={() => setSituation(s.key)} compact>{s.label}</Pill>
+          ))}
+        </div>
+      </div>
 
-      let distinct = Array.from(new Set(allCards.map((c) => c.r)));
-      let withLowAce = [...distinct];
-      if (distinct.includes(14)) withLowAce.push(1);
-      const rankSet = new Set(withLowAce);
+      {note && (
+        <div className="mx-3 mt-3 p-2.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs text-zinc-400 leading-relaxed">{note}</div>
+      )}
 
-      const missing = new Set();
-      for (let s = 1; s <= 10; s++) {
-        const window = [s, s + 1, s + 2, s + 3, s + 4];
-        const present = window.filter((r) => rankSet.has(r));
-        if (present.length === 4) {
-          const miss = window.find((r) => !rankSet.has(r));
-          missing.add(miss === 1 ? 14 : miss);
-        }
-      }
-      const straightOuts = missing.size * 4;
+      <div className="flex-1 overflow-y-auto">
+        <div className="px-3 pt-3">
+          <div className="text-[10px] uppercase tracking-widest text-zinc-500 mb-1.5">Tay bạn</div>
+          <div className="flex items-center gap-3">
+            <div className="flex gap-2">
+              <CardSlot card={holeCards[0]} active={activeSlot === 0} onClick={() => handleSlotClick(0)} large />
+              <CardSlot card={holeCards[1]} active={activeSlot === 1} onClick={() => handleSlotClick(1)} large />
+            </div>
+            {handClass && (
+              <div className="text-zinc-500 text-xs">
+                Class: <span className="text-zinc-100 font-mono font-bold text-sm">{handClass}</span>
+              </div>
+            )}
+          </div>
+        </div>
 
-      let overcardOuts = 0;
-      if (category === 0 && board.length > 0) {
-        const boardHigh = Math.max(...board.map((c) => c.r));
-        const overs = holeCards.filter((c) => c.r > boardHigh).length;
-        overcardOuts = overs * 3;
-      }
+        {/* Picker if cards not both picked, else GTO matrix */}
+        <div className="px-3 pt-3 pb-3">
+          {bothFilled && !isBBopen ? (
+            <GTOMatrix position={position} situation={situation} highlightedHand={handClass} />
+          ) : !bothFilled ? (
+            <CardPicker usedKeys={usedKeys} onPick={pickCard} />
+          ) : null}
+        </div>
+      </div>
 
-      const totalOuts = (flushDraw ? 9 : 0) + straightOuts + overcardOuts;
-      return { flushDraw, straightOuts, overcardOuts, totalOuts };
-    }
-
-    function getPostflopAdvice({ category, pairCtx, kickerGood, draws, board, potSize, betToCall, numOpponents }) {
-      let tier;
-      if (category >= 3) tier = "premium";
-      else if (category === 2) tier = "strong";
-      else if (category === 1) {
-        if (pairCtx?.tag === "top" && kickerGood) tier = "strong";
-        else if (pairCtx?.tag === "top" || pairCtx?.tag === "pocket") tier = "medium-strong";
-        else tier = "medium";
-      } else tier = "weak";
-
-      const cardsToCome = board.length === 3 ? 2 : board.length === 4 ? 1 : 0;
-      const equityPct = cardsToCome === 2 ? draws.totalOuts * 4 : cardsToCome === 1 ? draws.totalOuts * 2 : 0;
-      const equityCapped = Math.min(equityPct, 95);
-      const potOddsNeeded = betToCall > 0 ? (betToCall / (potSize + betToCall)) * 100 : 0;
-      const multiwayNote = numOpponents >= 3 ? " Lưu ý: nhiều đối thủ trong pot, nên thận trọng hơn với bài trung bình." : "";
-
-      let result;
-      if (betToCall <= 0) {
-        if (tier === "premium" || tier === "strong") {
-          result = { action: "Bet (vào tiền chủ động)", reason: "Bài mạnh, nên chủ động đặt cược để xây pot và bảo vệ bài (gợi ý ~1/2–2/3 pot)." };
-        } else if (tier === "medium-strong" || tier === "medium") {
-          result = { action: "Check / Bet nhỏ thăm dò", reason: "Bài trung bình, có thể check kiểm soát pot, hoặc bet nhỏ ~1/3 pot để thăm dò." };
-        } else if (draws.totalOuts >= 8) {
-          result = { action: "Cân nhắc Bet (semi-bluff)", reason: `Draw mạnh (~${draws.totalOuts} outs), bet tạo fold equity và có cửa trúng bài.` };
-        } else {
-          result = { action: "Check", reason: "Bài chưa có gì đáng kể, không có lý do bỏ tiền vào pot." };
-        }
-      } else {
-        const betPct = potSize > 0 ? (betToCall / potSize) * 100 : 100;
-        if (tier === "premium") {
-          result = { action: "Raise / Call lớn", reason: "Bài rất mạnh (trips trở lên), nên raise để lấy giá trị tối đa." };
-        } else if (tier === "strong") {
-          result = { action: "Call / cân nhắc Raise", reason: "Hai đôi trở lên, đủ mạnh để theo thoải mái, có thể raise nếu muốn xây pot." + multiwayNote };
-        } else if (tier === "medium-strong") {
-          result = betPct <= 50
-            ? { action: "Call", reason: "Top pair / overpair, kèo cược không quá lớn so với pot, nên theo." + multiwayNote }
-            : { action: "Call thận trọng", reason: "Bài khá nhưng kèo cược lớn, theo dõi phản ứng tiếp theo trước khi bỏ thêm tiền." + multiwayNote };
-        } else if (tier === "medium") {
-          result = betPct <= 33
-            ? { action: "Call", reason: "Mức cược nhỏ, đủ pot odds để theo với bài trung bình." + multiwayNote }
-            : { action: "Fold", reason: "Mức cược lớn so với bài chỉ ở mức trung bình, nên bỏ." + multiwayNote };
-        } else if (equityCapped > 0) {
-          result = equityCapped >= potOddsNeeded
-            ? { action: "Call (theo pot odds)", reason: `Equity ước tính ~${equityCapped}% cao hơn mức cần ~${potOddsNeeded.toFixed(1)}% để theo có lời.` }
-            : { action: "Fold", reason: `Equity ước tính ~${equityCapped}% thấp hơn mức cần ~${potOddsNeeded.toFixed(1)}%, theo không có lời.` };
-        } else {
-          result = { action: cardsToCome === 0 ? "Fold (trừ khi đọc bluff)" : "Fold", reason: cardsToCome === 0
-            ? "Sông rồi, không còn draw. Bài yếu thì nên bỏ trừ khi bạn có lý do tin đối thủ đang bluff."
-            : "Không có bài, không có draw đáng kể, nên bỏ." };
-        }
-      }
-      return { ...result, equityCapped, potOddsNeeded, tier };
-    }
-
-    /* ============================================================
-       UI: CardPicker
-       ============================================================ */
-    function CardPicker({ need, value, onChange, disabledKeys }) {
-      const usedSet = new Set([...disabledKeys, ...value.map(cardKey)]);
-      function pick(card) {
-        if (value.length >= need) return;
-        if (usedSet.has(cardKey(card))) return;
-        onChange([...value, card]);
-      }
-      function clearSlot(idx) {
-        onChange(value.filter((_, i) => i !== idx));
-      }
-      const slots = Array.from({ length: need });
-
-      return (
-        <div>
-          <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
-            {slots.map((_, i) => {
-              const c = value[i];
-              return (
-                <button
-                  key={i}
-                  onClick={() => c && clearSlot(i)}
-                  style={{
-                    width: 52, height: 68, borderRadius: 8,
-                    background: c ? C.panelAlt : "transparent",
-                    border: `2px solid ${c ? C.gold : C.border}`,
-                    color: c ? SUIT_COLOR[c.s] : C.muted,
-                    fontFamily: "'Inter', sans-serif", fontWeight: 800, fontSize: 20,
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    cursor: c ? "pointer" : "default",
-                  }}
-                >
-                  {c ? cardLabel(c) : "—"}
-                </button>
-              );
-            })}
-            {value.length > 0 && (
-              <button
-                onClick={() => onChange([])}
-                style={{ alignSelf: "center", marginLeft: 4, background: "none", border: "none", color: C.muted, fontSize: 12, textDecoration: "underline", cursor: "pointer" }}
-              >
-                xóa hết
+      <div className="p-3 pt-2 space-y-2 border-t border-zinc-900">
+        {isBBopen ? (
+          <button onClick={onReset} className="w-full py-2.5 text-sm font-semibold bg-zinc-100 text-zinc-950 rounded-full">
+            ↻ Tay mới
+          </button>
+        ) : action ? (
+          <>
+            <div className={`rounded-2xl p-4 ${style.bg} ${style.text}`}>
+              <div className="text-[10px] uppercase tracking-widest opacity-70 mb-0.5">
+                {handClass} · {position} · {sitLabel}
+              </div>
+              <div className="flex items-baseline justify-between gap-3">
+                <div className="text-3xl font-bold tracking-tight">{action}</div>
+                {sizing && <div className="text-sm font-medium opacity-90">{sizing}</div>}
+              </div>
+            </div>
+            {action === 'FOLD' ? (
+              <button onClick={onReset} className="w-full py-2.5 text-xs text-zinc-500 border border-zinc-800 rounded-full">
+                ↻ Chơi tay mới
+              </button>
+            ) : (
+              <button onClick={onContinue} className="w-full py-2.5 text-sm font-semibold bg-zinc-100 text-zinc-950 rounded-full">
+                Đi tiếp đến Flop →
               </button>
             )}
+          </>
+        ) : (
+          <div className="rounded-2xl p-3 bg-zinc-900 border border-zinc-800 text-zinc-500 text-sm">
+            Chạm 2 lá bài của bạn để xem hành động GTO.
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(13, 1fr)", gap: 3 }}>
-            {SUITS.map((s) =>
-              RANK_VALUES.slice().reverse().map((r) => {
-                const card = { r, s };
-                const key = cardKey(card);
-                const disabled = usedSet.has(key) || value.length >= need;
-                return (
-                  <button
-                    key={key}
-                    onClick={() => pick(card)}
-                    disabled={disabled}
-                    style={{
-                      aspectRatio: "1 / 1.2",
-                      fontSize: 11,
-                      fontWeight: 700,
-                      fontFamily: "'Inter', sans-serif",
-                      borderRadius: 4,
-                      border: `1px solid ${C.border}`,
-                      background: usedSet.has(key) ? "#0A0F0D" : C.panel,
-                      color: usedSet.has(key) ? "#3A4842" : SUIT_COLOR[s],
-                      opacity: disabled && !usedSet.has(key) ? 0.35 : 1,
-                      cursor: disabled ? "default" : "pointer",
-                    }}
-                  >
-                    {rankLabel(r)}{SUIT_SYMBOL[s]}
-                  </button>
-                );
-              })
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ============ BOARD STAGE (flop / turn / river) ============
+
+const STAGE_META = {
+  flop:  { boardCount: 3, label: 'Flop',  prev: 'Pre-flop', next: 'Đi tiếp đến Turn →',  newSlot: 2 },
+  turn:  { boardCount: 4, label: 'Turn',  prev: 'Flop',     next: 'Đi tiếp đến River →', newSlot: 5 },
+  river: { boardCount: 5, label: 'River', prev: 'Turn',     next: null,                  newSlot: 6 },
+};
+
+function BoardStage({ stage, ctx, holeCards, setHoleCards, boardCards, setBoardCards, onBack, onContinue, onReset }) {
+  const meta = STAGE_META[stage];
+  const totalSlots = 2 + meta.boardCount;
+
+  const initialActive = (() => {
+    for (let i = 2; i < totalSlots; i++) {
+      if (boardCards[i - 2] === null) return i;
+    }
+    return null;
+  })();
+
+  const [activeSlot, setActiveSlot] = useState(initialActive);
+  const [oppAction, setOppAction] = useState('check');
+
+  const allSlotsArr = [...holeCards, ...boardCards];
+  const relevant = allSlotsArr.slice(0, totalSlots);
+  const allFilled = relevant.every(Boolean);
+  const usedKeys = new Set(relevant.filter(Boolean).map(cardKey));
+
+  function placeAt(idx, card) {
+    const next = [...allSlotsArr];
+    next[idx] = card;
+    setHoleCards(next.slice(0, 2));
+    setBoardCards(next.slice(2));
+    let n = null;
+    for (let i = idx + 1; i < totalSlots; i++) if (next[i] === null) { n = i; break; }
+    if (n === null) for (let i = 0; i < totalSlots; i++) if (next[i] === null) { n = i; break; }
+    setActiveSlot(n);
+  }
+  function pickCard(card) {
+    let idx = activeSlot;
+    if (idx === null || idx === undefined || idx >= totalSlots) {
+      idx = relevant.findIndex(c => c === null);
+      if (idx < 0) return;
+    }
+    placeAt(idx, card);
+  }
+  function handleSlotClick(idx) {
+    if (activeSlot === idx && allSlotsArr[idx]) {
+      const next = [...allSlotsArr]; next[idx] = null;
+      setHoleCards(next.slice(0, 2));
+      setBoardCards(next.slice(2));
+      setActiveSlot(idx);
+    } else setActiveSlot(idx);
+  }
+
+  const board = boardCards.slice(0, meta.boardCount);
+  const analysis = allFilled ? classifyHand(holeCards, board, stage) : null;
+  const action = analysis ? recommendStreet(stage, analysis.tier, analysis.texture, ctx.isAggressor, oppAction) : null;
+  const actStyle = action ? FLOP_COLOR_STYLE[action.color] : null;
+
+  const canContinue = meta.next && action && action.color !== 'fold' && allFilled;
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="px-3 pt-3 pb-2 flex items-center justify-between border-b border-zinc-900">
+        <button onClick={onBack} className="text-zinc-400 text-sm flex items-center gap-1">
+          <span>←</span><span>{meta.prev}</span>
+        </button>
+        <div className="text-[11px] text-zinc-400">
+          <span className="font-bold text-zinc-100">{ctx.handClass}</span>
+          <span className="text-zinc-600"> · </span>{ctx.position}
+          <span className="text-zinc-600"> · </span>
+          {ctx.isAggressor
+            ? <span className="text-emerald-400 font-semibold">Agg</span>
+            : <span className="text-amber-400 font-semibold">Caller</span>}
+          <span className="text-zinc-600"> · </span>
+          <span className="font-bold text-zinc-100">{meta.label}</span>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto">
+        {/* Slot row */}
+        <div className="px-3 pt-3">
+          <div className="flex items-end gap-2 flex-wrap">
+            <div>
+              <div className="text-[10px] uppercase tracking-widest text-zinc-500 mb-1.5">Tay</div>
+              <div className="flex gap-1.5">
+                <CardSlot card={holeCards[0]} active={activeSlot === 0} onClick={() => handleSlotClick(0)} />
+                <CardSlot card={holeCards[1]} active={activeSlot === 1} onClick={() => handleSlotClick(1)} />
+              </div>
+            </div>
+            <div>
+              <div className="text-[10px] uppercase tracking-widest text-zinc-500 mb-1.5">Flop</div>
+              <div className="flex gap-1.5">
+                <CardSlot card={boardCards[0]} active={activeSlot === 2} onClick={() => handleSlotClick(2)} />
+                <CardSlot card={boardCards[1]} active={activeSlot === 3} onClick={() => handleSlotClick(3)} />
+                <CardSlot card={boardCards[2]} active={activeSlot === 4} onClick={() => handleSlotClick(4)} />
+              </div>
+            </div>
+            {meta.boardCount >= 4 && (
+              <div>
+                <div className="text-[10px] uppercase tracking-widest text-zinc-500 mb-1.5">Turn</div>
+                <CardSlot card={boardCards[3]} active={activeSlot === 5} onClick={() => handleSlotClick(5)} />
+              </div>
+            )}
+            {meta.boardCount >= 5 && (
+              <div>
+                <div className="text-[10px] uppercase tracking-widest text-zinc-500 mb-1.5">River</div>
+                <CardSlot card={boardCards[4]} active={activeSlot === 6} onClick={() => handleSlotClick(6)} />
+              </div>
             )}
           </div>
         </div>
-      );
-    }
 
-    /* ============================================================
-       UI: StreetTracker (signature rail)
-       ============================================================ */
-    function StreetTracker({ stage }) {
-      const steps = ["preflop", "flop", "turn", "river"];
-      const idx = steps.indexOf(stage);
-      return (
-        <div style={{ display: "flex", alignItems: "center", marginBottom: 18 }}>
-          {steps.map((s, i) => (
-            <React.Fragment key={s}>
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
-                <div style={{
-                  width: 14, height: 14, borderRadius: "50%",
-                  background: i <= idx ? C.gold : "transparent",
-                  border: `2px solid ${i <= idx ? C.gold : C.border}`,
-                  boxShadow: i === idx ? `0 0 0 4px rgba(217,164,65,0.18)` : "none",
-                }} />
-                <span style={{
-                  fontFamily: "'Bebas Neue', sans-serif", fontSize: 13, letterSpacing: 1,
-                  color: i <= idx ? C.goldBright : C.muted,
-                }}>
-                  {s === "preflop" ? "PREFLOP" : s.toUpperCase()}
-                </span>
-              </div>
-              {i < steps.length - 1 && (
-                <div style={{ flex: 1, height: 2, background: i < idx ? C.gold : C.border, marginBottom: 18 }} />
-              )}
-            </React.Fragment>
-          ))}
-        </div>
-      );
-    }
-
-    /* ============================================================
-       UI: Chip-style selector
-       ============================================================ */
-    function ChipRow({ options, value, onChange, labelFn }) {
-      return (
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {options.map((opt) => (
-            <button
-              key={opt}
-              onClick={() => onChange(opt)}
-              style={{
-                padding: "8px 14px", borderRadius: 999,
-                border: `1.5px solid ${value === opt ? C.gold : C.border}`,
-                background: value === opt ? "rgba(217,164,65,0.14)" : "transparent",
-                color: value === opt ? C.goldBright : C.text,
-                fontFamily: "'Inter', sans-serif", fontWeight: 600, fontSize: 13,
-                cursor: "pointer",
-              }}
-            >
-              {labelFn ? labelFn(opt) : opt}
-            </button>
-          ))}
-        </div>
-      );
-    }
-
-    function NumberField({ label, value, onChange, suffix }) {
-      return (
-        <div style={{ flex: 1, minWidth: 110 }}>
-          <div style={{ fontSize: 12, color: C.muted, marginBottom: 5, fontFamily: "'Inter', sans-serif" }}>{label}</div>
-          <div style={{ display: "flex", alignItems: "center", background: C.panelAlt, border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 10px" }}>
-            <input
-              type="number"
-              value={value}
-              onChange={(e) => onChange(e.target.value === "" ? 0 : Number(e.target.value))}
-              style={{ background: "transparent", border: "none", outline: "none", color: C.text, width: "100%", fontFamily: "'Inter', sans-serif", fontSize: 15, fontWeight: 600 }}
-            />
-            {suffix && <span style={{ color: C.muted, fontSize: 12 }}>{suffix}</span>}
+        {!allFilled && (
+          <div className="px-3 pt-3">
+            <CardPicker usedKeys={usedKeys} onPick={pickCard} />
           </div>
-        </div>
-      );
-    }
+        )}
 
-    function SectionLabel({ children }) {
-      return <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, fontWeight: 700, color: C.muted, letterSpacing: 0.5, textTransform: "uppercase", marginBottom: 8 }}>{children}</div>;
-    }
-
-    function AdviceCard({ advice, meta }) {
-      if (!advice) return null;
-      const color = /fold/i.test(advice.action) ? C.red : /raise|bet|3-bet|4-bet|all-in/i.test(advice.action) ? C.gold : C.teal;
-      return (
-        <div style={{ background: C.panelAlt, border: `1.5px solid ${color}`, borderRadius: 12, padding: 16, marginTop: 14 }}>
-          <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 28, letterSpacing: 1, color }}>{advice.action}</div>
-          <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 14, color: C.text, marginTop: 6, lineHeight: 1.5 }}>{advice.reason}</div>
-          {meta && (
-            <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 12, paddingTop: 12, borderTop: `1px solid ${C.border}` }}>
-              {meta.map((m, i) => (
-                <div key={i}>
-                  <div style={{ fontSize: 10, color: C.muted, fontFamily: "'Inter', sans-serif", textTransform: "uppercase" }}>{m.label}</div>
-                  <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 18, color: C.goldBright }}>{m.value}</div>
-                </div>
+        {allFilled && (
+          <div className="px-3 pt-3">
+            <div className="text-[10px] uppercase tracking-widest text-zinc-500 mb-1.5">Đối thủ làm gì?</div>
+            <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-3 px-3">
+              {OPP_ACTIONS.map(o => (
+                <Pill key={o.key} active={oppAction === o.key} onClick={() => setOppAction(o.key)} compact>{o.label}</Pill>
               ))}
             </div>
-          )}
-        </div>
-      );
-    }
+          </div>
+        )}
 
-    /* ============================================================
-       APP
-       ============================================================ */
-    const emptyHand = (position = "UTG") => ({
-      position,
-      holeCards: [],
-      board: [],
-      facing: "none",
-      callersBefore: 0,
-      pots: { flop: { pot: 0, bet: 0, opp: 1 }, turn: { pot: 0, bet: 0, opp: 1 }, river: { pot: 0, bet: 0, opp: 1 } },
-      log: {},
-    });
-
-    function nextPosition(pos) {
-      const i = POSITIONS.indexOf(pos);
-      return POSITIONS[(i + 1) % POSITIONS.length];
-    }
-
-    function PokerLiveAssistant() {
-      const [handNumber, setHandNumber] = useState(1);
-      const [stage, setStage] = useState("preflop");
-      const [hand, setHand] = useState(() => emptyHand("UTG"));
-      const [history, setHistory] = useState([]);
-      const [showHistory, setShowHistory] = useState(false);
-      const [table, setTable] = useState({ sb: 1, bb: 2, stack: 200 });
-      const [chipDelta, setChipDelta] = useState(0);
-
-      const usedKeys = useMemo(
-        () => [...hand.holeCards, ...hand.board].map(cardKey),
-        [hand.holeCards, hand.board]
-      );
-
-      const preflopAdvice = useMemo(() => {
-        if (hand.holeCards.length !== 2) return null;
-        const score = chenScore(hand.holeCards[0], hand.holeCards[1]);
-        return getPreflopAdvice({ position: hand.position, score, facing: hand.facing, callersBefore: hand.callersBefore });
-      }, [hand.holeCards, hand.position, hand.facing, hand.callersBefore]);
-
-      function postflopAdvice(streetKey, neededBoardLen) {
-        if (hand.board.length !== neededBoardLen) return null;
-        const all = [...hand.holeCards, ...hand.board];
-        const evalRes = evaluateHand(all);
-        const pairCtx = evalRes.category === 1 ? getPairContext(evalRes.detail.pairRank, hand.holeCards, hand.board) : null;
-        let kickerGood = false;
-        if (pairCtx && pairCtx.tag === "top") {
-          const kicker = hand.holeCards.find((c) => c.r !== evalRes.detail.pairRank);
-          kickerGood = kicker && kicker.r >= 11;
-        }
-        const draws = detectDraws(all, hand.holeCards, hand.board, evalRes.category);
-        const cfg = hand.pots[streetKey];
-        const advice = getPostflopAdvice({
-          category: evalRes.category, pairCtx, kickerGood, draws, board: hand.board,
-          potSize: cfg.pot, betToCall: cfg.bet, numOpponents: cfg.opp,
-        });
-        return { evalRes, pairCtx, draws, advice, cfg };
-      }
-
-      const flopResult = stage === "flop" ? postflopAdvice("flop", 3) : null;
-      const turnResult = stage === "turn" ? postflopAdvice("turn", 4) : null;
-      const riverResult = stage === "river" ? postflopAdvice("river", 5) : null;
-      const current = flopResult || turnResult || riverResult;
-
-      function updatePot(streetKey, field, val) {
-        setHand((h) => ({ ...h, pots: { ...h.pots, [streetKey]: { ...h.pots[streetKey], [field]: val } } }));
-      }
-
-      function goToStreet(next) {
-        setStage(next);
-      }
-
-      function endHand(resultTag) {
-        const stackAfter = table.stack + chipDelta;
-        setHistory((h) => [
-          {
-            handNumber, position: hand.position, holeCards: hand.holeCards, board: hand.board,
-            result: resultTag, chipDelta, stackAfter,
-          },
-          ...h,
-        ]);
-        setTable((t) => ({ ...t, stack: stackAfter }));
-        setChipDelta(0);
-        setHandNumber((n) => n + 1);
-        setHand(emptyHand(nextPosition(hand.position)));
-        setStage("preflop");
-      }
-
-      const streetKeyMap = { flop: "flop", turn: "turn", river: "river" };
-
-      return (
-        <div style={{ minHeight: "100vh", background: C.bg, color: C.text, fontFamily: "'Inter', sans-serif" }}>
-          <style>{FONT_IMPORT}</style>
-
-          <div style={{ maxWidth: 480, margin: "0 auto", padding: "20px 16px 60px" }}>
-            {/* HEADER */}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
-              <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 32, letterSpacing: 1.5, color: C.goldBright }}>
-                POKER LIVE COACH
-              </div>
-              <div style={{ fontSize: 13, color: C.muted }}>9-max · Cash</div>
-            </div>
-            <div style={{ fontSize: 13, color: C.muted, marginBottom: 14 }}>Ván số {handNumber}</div>
-
-            <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 12, padding: 14, marginBottom: 18 }}>
-              <SectionLabel>Bàn chơi</SectionLabel>
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                <NumberField label="Blind nhỏ (SB)" value={table.sb} onChange={(v) => setTable((t) => ({ ...t, sb: v }))} />
-                <NumberField label="Blind lớn (BB)" value={table.bb} onChange={(v) => setTable((t) => ({ ...t, bb: v }))} />
-                <NumberField label="Chip của tôi" value={table.stack} onChange={(v) => setTable((t) => ({ ...t, stack: v }))} />
-              </div>
-              <div style={{ marginTop: 8, fontSize: 12, color: C.muted }}>
-                ≈ {table.bb > 0 ? (table.stack / table.bb).toFixed(1) : "—"} bb
-              </div>
-            </div>
-
-            <StreetTracker stage={stage} />
-
-            {/* ===================== PREFLOP ===================== */}
-            {stage === "preflop" && (
-              <div>
-                <SectionLabel>Vị trí của bạn</SectionLabel>
-                <ChipRow options={POSITIONS} value={hand.position} onChange={(v) => setHand((h) => ({ ...h, position: v }))} labelFn={(o) => POSITION_LABEL[o]} />
-                <div style={{ fontSize: 11.5, color: C.muted, marginTop: 6 }}>
-                  Tự động xoay sang vị trí kế tiếp sau mỗi ván — bấm chỉnh tay nếu có người vào/rời bàn.
-                </div>
-
-                <div style={{ height: 18 }} />
-                <SectionLabel>Bài của bạn</SectionLabel>
-                <CardPicker need={2} value={hand.holeCards} onChange={(v) => setHand((h) => ({ ...h, holeCards: v }))} disabledKeys={usedKeys} />
-
-                <div style={{ height: 18 }} />
-                <SectionLabel>Hành động trước khi tới lượt bạn</SectionLabel>
-                <ChipRow
-                  options={["none", "limped", "open", "3bet", "4bet"]}
-                  value={hand.facing}
-                  onChange={(v) => setHand((h) => ({ ...h, facing: v }))}
-                  labelFn={(o) => FACING_LABEL[o]}
-                />
-
-                {hand.facing !== "none" && (
-                  <div style={{ marginTop: 12 }}>
-                    <NumberField label="Số người đã vào pot trước bạn" value={hand.callersBefore} onChange={(v) => setHand((h) => ({ ...h, callersBefore: v }))} />
-                  </div>
-                )}
-
-                <AdviceCard
-                  advice={preflopAdvice}
-                  meta={preflopAdvice ? [
-                    { label: "Chen score", value: preflopAdvice.score },
-                    { label: "Vị trí", value: POSITION_LABEL[hand.position] },
-                    { label: "Tình huống", value: FACING_LABEL[hand.facing] },
-                  ] : null}
-                />
-
-                {preflopAdvice && (
-                  <div style={{ marginTop: 16 }}>
-                    <NumberField label="Kết quả ván này (chip, để 0 nếu chưa biết)" value={chipDelta} onChange={setChipDelta} suffix="chip" />
-                    <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
-                      <button onClick={() => endHand("fold-preflop")} style={btnStyle(C.red, true)}>Fold / Kết thúc ván</button>
-                      <button onClick={() => goToStreet("flop")} style={btnStyle(C.teal)}>Tiếp tục → Flop</button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* ===================== FLOP / TURN / RIVER ===================== */}
-            {(stage === "flop" || stage === "turn" || stage === "river") && (
-              <div>
-                <div style={{ display: "flex", gap: 16, marginBottom: 16, fontSize: 13, color: C.muted }}>
-                  <span>Vị trí: <b style={{ color: C.text }}>{POSITION_LABEL[hand.position]}</b></span>
-                  <span>Bài: <b style={{ color: C.text }}>{hand.holeCards.map(cardLabel).join(" ")}</b></span>
-                </div>
-
-                <SectionLabel>
-                  {stage === "flop" ? "Bài chung (3 lá Flop)" : stage === "turn" ? "Thêm 1 lá Turn" : "Thêm 1 lá River"}
-                </SectionLabel>
-                <CardPicker
-                  need={stage === "flop" ? 3 : stage === "turn" ? 4 : 5}
-                  value={hand.board}
-                  onChange={(v) => setHand((h) => ({ ...h, board: v }))}
-                  disabledKeys={[...hand.holeCards.map(cardKey)]}
-                />
-
-                <div style={{ height: 18 }} />
-                <SectionLabel>Tình huống cược</SectionLabel>
-                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                  <NumberField label="Pot hiện tại" suffix="bb" value={hand.pots[streetKeyMap[stage]].pot} onChange={(v) => updatePot(streetKeyMap[stage], "pot", v)} />
-                  <NumberField label="Cược cần theo" suffix="bb" value={hand.pots[streetKeyMap[stage]].bet} onChange={(v) => updatePot(streetKeyMap[stage], "bet", v)} />
-                  <NumberField label="Số đối thủ còn lại" value={hand.pots[streetKeyMap[stage]].opp} onChange={(v) => updatePot(streetKeyMap[stage], "opp", v)} />
-                </div>
-
-                {current && (
-                  <>
-                    <div style={{ marginTop: 16, fontSize: 13, color: C.muted }}>
-                      Bài hiện tại: <b style={{ color: C.goldBright }}>{current.evalRes.label}</b>
-                      {current.pairCtx ? ` · ${current.pairCtx.text}` : ""}
-                      {current.draws.totalOuts > 0 ? ` · ~${current.draws.totalOuts} outs` : ""}
-                    </div>
-                    <AdviceCard
-                      advice={current.advice}
-                      meta={[
-                        ...(current.draws.totalOuts > 0 && stage !== "river" ? [{ label: "Equity ước tính", value: `${current.advice.equityCapped}%` }] : []),
-                        ...(current.cfg.bet > 0 ? [{ label: "Pot odds cần", value: `${current.advice.potOddsNeeded.toFixed(1)}%` }] : []),
-                      ]}
-                    />
-                    <div style={{ marginTop: 16 }}>
-                      <NumberField label="Kết quả ván này (chip, để 0 nếu chưa biết)" value={chipDelta} onChange={setChipDelta} suffix="chip" />
-                      <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
-                        <button onClick={() => endHand(`fold-${stage}`)} style={btnStyle(C.red, true)}>Fold / Kết thúc ván</button>
-                        {stage !== "river" && (
-                          <button onClick={() => goToStreet(stage === "flop" ? "turn" : "river")} style={btnStyle(C.teal)}>
-                            Tiếp tục → {stage === "flop" ? "Turn" : "River"}
-                          </button>
-                        )}
-                        {stage === "river" && (
-                          <button onClick={() => endHand("showdown")} style={btnStyle(C.gold)}>Kết thúc ván</button>
-                        )}
-                      </div>
-                    </div>
-                  </>
-                )}
-              </div>
-            )}
-
-            {/* ===================== HISTORY ===================== */}
-            {history.length > 0 && (
-              <div style={{ marginTop: 36 }}>
-                <button
-                  onClick={() => setShowHistory((s) => !s)}
-                  style={{ background: "none", border: "none", color: C.muted, fontSize: 13, cursor: "pointer", padding: 0, textDecoration: "underline" }}
-                >
-                  {showHistory ? "Ẩn" : "Xem"} lịch sử phiên ({history.length} ván)
-                </button>
-                {showHistory && (
-                  <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
-                    {history.map((h, i) => (
-                      <div key={i} style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 12px", fontSize: 13 }}>
-                        <div style={{ display: "flex", justifyContent: "space-between" }}>
-                          <span style={{ color: C.muted }}>#{h.handNumber} · {POSITION_LABEL[h.position]}</span>
-                          <span>{h.holeCards.map(cardLabel).join(" ")} {h.board.length > 0 ? "· " + h.board.map(cardLabel).join(" ") : ""}</span>
-                          <span style={{ color: C.gold }}>{h.result}</span>
-                        </div>
-                        {h.chipDelta !== 0 && (
-                          <div style={{ marginTop: 2, fontSize: 12, color: h.chipDelta > 0 ? C.teal : C.red }}>
-                            {h.chipDelta > 0 ? "+" : ""}{h.chipDelta} chip · stack còn {h.stackAfter}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-
-            <div style={{ marginTop: 28, fontSize: 11.5, color: C.muted, lineHeight: 1.5 }}>
-              Công cụ dùng công thức Chen (preflop) và pot odds / outs (postflop) để ước lượng nhanh, mang tính tham khảo,
-              không thay thế hoàn toàn cho đọc bài và kinh nghiệm thực tế tại bàn.
+        {analysis && (
+          <div className="px-3 pt-3">
+            <div className="rounded-xl bg-zinc-900 border border-zinc-800 p-3">
+              <div className="text-[10px] uppercase tracking-widest text-zinc-500 mb-1">Phân tích · {meta.label}</div>
+              <div className="text-sm font-semibold text-zinc-100">{analysis.handLabel}</div>
+              <div className="text-xs text-zinc-500 mt-1">Board: {TEXTURE_LABEL[analysis.texture]}</div>
             </div>
           </div>
-        </div>
-      );
-    }
+        )}
 
-    function btnStyle(color, outline) {
-      return {
-        flex: 1, padding: "12px 0", borderRadius: 10,
-        border: `1.5px solid ${color}`,
-        background: outline ? "transparent" : color,
-        color: outline ? color : "#10180f",
-        fontFamily: "'Inter', sans-serif", fontWeight: 700, fontSize: 14,
-        cursor: "pointer",
-      };
-    }
+        {action && (
+          <div className="px-3 pt-3 pb-3">
+            <div className={`rounded-2xl p-4 ${actStyle.bg} ${actStyle.text}`}>
+              <div className="text-[10px] uppercase tracking-widest opacity-70 mb-0.5">Hành động · {meta.label}</div>
+              <div className="flex items-baseline justify-between gap-3 mb-1.5">
+                <div className="text-2xl font-bold tracking-tight">{action.action}</div>
+                {action.sizing && <div className="text-xs font-medium opacity-90 text-right">{action.sizing}</div>}
+              </div>
+              <div className="text-xs opacity-85 leading-relaxed">{action.reason}</div>
+            </div>
+          </div>
+        )}
+      </div>
 
-    const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<PokerLiveAssistant />);
+      <div className="px-3 py-2 border-t border-zinc-900 space-y-1.5">
+        {canContinue && (
+          <button onClick={onContinue} className="w-full py-2.5 text-sm font-semibold bg-zinc-100 text-zinc-950 rounded-full">
+            {meta.next}
+          </button>
+        )}
+        <button onClick={onReset} className="w-full py-2 text-xs text-zinc-500 border border-zinc-800 rounded-full">
+          ↻ Tay mới
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ============ APP ============
+
+function App() {
+  const [stage, setStage] = useState('preflop');
+  const [position, setPosition] = useState('BTN');
+  const [situation, setSituation] = useState('open');
+  const [holeCards, setHoleCards] = useState([null, null]);
+  const [boardCards, setBoardCards] = useState([null, null, null, null, null]);
+
+  const handClass = holeCards[0] && holeCards[1] ? cardsToHand(holeCards[0], holeCards[1]) : null;
+  const preAction = handClass ? getAction(position, situation, handClass) : null;
+  const isAggressor = preAction === 'RAISE';
+
+  function newHand() {
+    setHoleCards([null, null]);
+    setBoardCards([null, null, null, null, null]);
+    setStage('preflop');
+  }
+
+  function goToFlop() {
+    setBoardCards([null, null, null, null, null]);
+    setStage('flop');
+  }
+  function advanceStage() {
+    if (stage === 'flop') setStage('turn');
+    else if (stage === 'turn') setStage('river');
+  }
+  function backStage() {
+    if (stage === 'flop') setStage('preflop');
+    else if (stage === 'turn') setStage('flop');
+    else if (stage === 'river') setStage('turn');
+  }
+
+  const ctx = { handClass, position, situation, isAggressor, preAction };
+
+  return (
+    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col"
+         style={{ fontFamily: 'ui-sans-serif, system-ui, -apple-system, sans-serif' }}>
+      {stage === 'preflop' ? (
+        <PreflopStage
+          position={position} setPosition={setPosition}
+          situation={situation} setSituation={setSituation}
+          holeCards={holeCards} setHoleCards={setHoleCards}
+          onContinue={goToFlop}
+          onReset={newHand}
+        />
+      ) : (
+        <BoardStage
+          key={stage}
+          stage={stage}
+          ctx={ctx}
+          holeCards={holeCards} setHoleCards={setHoleCards}
+          boardCards={boardCards} setBoardCards={setBoardCards}
+          onBack={backStage}
+          onContinue={advanceStage}
+          onReset={newHand}
+        />
+      )}
+    </div>
+  );
+}
+
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
   </script>
 </body>
 </html>
